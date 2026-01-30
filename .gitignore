@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local environment files (secrets)
+.env.local
+ai-professor-643e8-firebase-adminsdk-*.json
