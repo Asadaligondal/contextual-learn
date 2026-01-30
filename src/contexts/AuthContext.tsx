@@ -1,125 +1,118 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { User } from '@/types/memory';
-import { auth, db } from '@/lib/firebase';
-import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut as firebaseSignOut,
-  updateProfile as firebaseUpdateProfile,
-} from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+
+// Demo auth (no Firebase) — allows any user to sign in with any email.
+// This is intentionally permissive for demo/Vercel preview usage only.
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  signup: (email: string, password: string, name: string) => Promise<{ success: boolean; error?: string }>;
-  logout: () => Promise<void>;
-  updateUser: (updates: Partial<User>) => Promise<void>;
+  login: (email: string, password?: string) => Promise<{ success: boolean; error?: string }>;
+  signup: (email: string, password?: string, name?: string) => Promise<{ success: boolean; error?: string }>;
+  logout: () => void;
+  updateUser: (updates: Partial<User>) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const STORAGE_KEY = 'learncontext_auth';
+const USERS_KEY = 'learncontext_users';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Listen to Firebase Auth state
+  // Load user from localStorage on mount
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
-      if (!fbUser) {
-        setUser(null);
-        setIsLoading(false);
-        return;
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      try {
+        setUser(JSON.parse(stored));
+      } catch (e) {
+        localStorage.removeItem(STORAGE_KEY);
       }
-
-      // Try to load profile from Firestore
-      const userDocRef = doc(db, 'users', fbUser.uid);
-      const snap = await getDoc(userDocRef);
-      if (snap.exists()) {
-        setUser(snap.data() as User);
-      } else {
-        const newUser: User = {
-          id: fbUser.uid,
-          email: fbUser.email || '',
-          name: fbUser.displayName || '',
-          createdAt: new Date().toISOString(),
-          hasCompletedOnboarding: false,
-        };
-        await setDoc(userDocRef, newUser);
-        setUser(newUser);
-      }
-
-      setIsLoading(false);
-    });
-
-    return () => unsubscribe();
+    }
+    setIsLoading(false);
   }, []);
 
-  const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
+  // Persist user to localStorage
+  useEffect(() => {
+    if (user) localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
+    else localStorage.removeItem(STORAGE_KEY);
+  }, [user]);
+
+  const getUsers = useCallback((): Record<string, { user: User }> => {
+    const stored = localStorage.getItem(USERS_KEY);
+    return stored ? JSON.parse(stored) : {};
+  }, []);
+
+  const saveUsers = useCallback((users: Record<string, { user: User }>) => {
+    localStorage.setItem(USERS_KEY, JSON.stringify(users));
+  }, []);
+
+  // Login: permissive demo — ignore password and allow any email.
+  const login = async (email: string): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
-    try {
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-      const uid = cred.user.uid;
-      const snap = await getDoc(doc(db, 'users', uid));
-      if (snap.exists()) {
-        setUser(snap.data() as User);
-      }
+    await new Promise((r) => setTimeout(r, 200));
+
+    const normalized = email.toLowerCase();
+    const users = getUsers();
+
+    if (users[normalized]) {
+      setUser(users[normalized].user);
       setIsLoading(false);
       return { success: true };
-    } catch (err: any) {
-      setIsLoading(false);
-      return { success: false, error: err?.message || 'Login failed' };
     }
+
+    // Create a lightweight user profile on first login
+    const newUser: User = {
+      id: (crypto as any).randomUUID ? (crypto as any).randomUUID() : String(Date.now()),
+      email: normalized,
+      name: normalized.split('@')[0] || 'Guest',
+      createdAt: new Date().toISOString(),
+      hasCompletedOnboarding: true,
+    };
+
+    users[normalized] = { user: newUser };
+    saveUsers(users);
+    setUser(newUser);
+    setIsLoading(false);
+    return { success: true };
   };
 
-  const signup = async (email: string, password: string, name: string): Promise<{ success: boolean; error?: string }> => {
+  // Signup: same as login for demo
+  const signup = async (email: string, _password?: string, name?: string): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
-    try {
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
-      const uid = cred.user.uid;
-
-      // Add profile to Firestore
-      const newUser: User = {
-        id: uid,
-        email: email.toLowerCase(),
-        name,
-        createdAt: new Date().toISOString(),
-        hasCompletedOnboarding: false,
-      };
-      await setDoc(doc(db, 'users', uid), newUser);
-
-      // Update displayName on auth user
-      try {
-        await firebaseUpdateProfile(cred.user, { displayName: name });
-      } catch (e) {
-        // ignore
-      }
-
-      setUser(newUser);
-      setIsLoading(false);
-      return { success: true };
-    } catch (err: any) {
-      setIsLoading(false);
-      return { success: false, error: err?.message || 'Signup failed' };
-    }
+    await new Promise((r) => setTimeout(r, 200));
+    const normalized = email.toLowerCase();
+    const users = getUsers();
+    const newUser: User = {
+      id: (crypto as any).randomUUID ? (crypto as any).randomUUID() : String(Date.now()),
+      email: normalized,
+      name: name || normalized.split('@')[0] || 'Guest',
+      createdAt: new Date().toISOString(),
+      hasCompletedOnboarding: true,
+    };
+    users[normalized] = { user: newUser };
+    saveUsers(users);
+    setUser(newUser);
+    setIsLoading(false);
+    return { success: true };
   };
 
-  const logout = async () => {
-    await firebaseSignOut(auth);
+  const logout = () => {
     setUser(null);
   };
 
-  const updateUser = async (updates: Partial<User>) => {
+  const updateUser = (updates: Partial<User>) => {
     if (!user) return;
-    const updatedUser = { ...user, ...updates };
-    setUser(updatedUser);
-    try {
-      await updateDoc(doc(db, 'users', user.id), updates as any);
-    } catch (e) {
-      // ignore write errors for now
+    const updated = { ...user, ...updates };
+    setUser(updated);
+    const users = getUsers();
+    if (users[user.email]) {
+      users[user.email].user = updated;
+      saveUsers(users);
     }
   };
 

@@ -3,9 +3,18 @@ import { buildPrompt } from './promptEngine';
 
 // Check if API key is configured
 const getApiKey = (): string | null => {
-  // In a real app, this would come from environment variables or secure storage
-  // For demo purposes, we check localStorage
-  return localStorage.getItem('learncontext_openai_key');
+  // Priority order:
+  // 1. Key explicitly saved by the user in localStorage (via Settings)
+  // 2. Vite env variable (useful for local dev: .env.local with VITE_OPENAI_KEY)
+  // NOTE: Storing a secret in a client-bundled env var is insecure for production.
+  const lsKey = localStorage.getItem('learncontext_openai_key');
+  if (lsKey) return lsKey;
+
+  // Vite exposes variables prefixed with VITE_ at build time. This is useful
+  // for local development, but the value is bundled into the client and
+  // therefore public in production — prefer a server-side proxy for real apps.
+  const envKey = import.meta.env.VITE_OPENAI_KEY;
+  return envKey ? String(envKey) : null;
 };
 
 export interface AIResponse {
